@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Filmstrip</title>
+  <style>
+    body {
+      background-color: white;
+      font-family: 'Courier', monospace;
+      text-align: center;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: black;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    #drop-area {
+      border: 2px dashed #ccc;
+      padding: 80px;
+      width: 90%;
+      margin: 40px auto;
+      cursor: pointer;
+      transition: border-color 0.3s;
+    }
+    #gallery {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 20px;
+      width: 100%;
+    }
+    .gallery-group {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 20px;
+      width: 100%;
+      border-top: 1px dashed #aaa;
+      padding-top: 20px;
+    }
+    .gallery-item-container {
+      margin: 10px;
+      max-width: 200px;
+      max-height: 200px;
+      cursor: pointer;
+      object-fit: contain;
+      text-align: center;
+    }
+    .gallery-item {
+      max-width: 100%;
+      max-height: 100%;
+    }
+    .filename {
+      font-size: 10px;
+      display: none;
+    }
+    #lightbox {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: none;
+      justify-content: center;
+      align-items: center;
+      background-color: white;
+      z-index: 1000;
+      flex-direction: column;
+    }
+    #lightbox img {
+      max-width: 90%;
+      max-height: 80%;
+      object-fit: contain;
+    }
+    #lightbox .filename {
+      margin-top: 10px;
+      font-size: 16px;
+      display: none;
+      text-align: center;
+    }
+    #legend {
+      margin-top: 5px;
+      font-size: 12px;
+    }
+    #progress-bar {
+    width: 0%;
+    height: 10px;
+    background-color: black;
+    transition: width 0.3s ease-in-out;
+}
+
+  </style>
+</head>
+<body>
+  <h2 id="title">Filmstrip</h2>
+  <div id="legend">
+    Toggle Background Color (White) = W | Toggle Background Color (Black) = B |
+    Fullscreen Mode = F | Toggle Filenames = I
+  </div>
+  <button id="clear-btn" style="
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  padding: 8px 16px;
+  margin-top: 10px;
+  cursor: pointer;
+  border: 1px solid black;
+  background-color: white;
+  color: black;
+  border-radius: 4px;
+  transition: background-color 0.2s, color 0.2s;
+">Clear All</button>
+
+
+  <div id="drop-area" aria-label="Drop area to upload images">Drop images here</div>
+  <div id="progress-bar-container" style="width: 90%; margin: 20px auto; display: none;">
+    <span id="progress-text" style="font-size: 14px; font-weight: bold; color: black;">0%</span>
+    <div id="progress-bar" style="width: 0%; height: 10px; background-color: black; transition: width 0.3s ease-in-out;"></div>
+</div>
+  <div id="progress-bar-container" style="width: 90%; margin: 20px auto; display: none;">
+    <div id="progress-bar" style="width: 0%; height: 10px; background-color: black;"></div>
+</div>  
+  <div id="gallery" aria-live="polite"></div>
+  <div id="lightbox" onclick="closeLightbox()" aria-hidden="true">
+    <img id="lightbox-img" src="" alt="Lightbox image" />
+    <div id="lightbox-filename" class="filename"></div>  
+  </div>
+
+  <script>
+    const dropArea = document.getElementById('drop-area');
+    const gallery = document.getElementById('gallery');
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightbox-img');
+    const lightboxFilename = document.getElementById('lightbox-filename');
+    const title = document.getElementById('title');
+    const legend = document.getElementById('legend');
+
+    let imageList = []; // Store all images globally
+    let currentIndex = 0;
+    let isWhiteBackground = true;
+    let showFilenames = false;
+    let lastBatchCount = 0;
+
+    dropArea.addEventListener('dragover', handleDragOver);
+    dropArea.addEventListener('dragleave', handleDragLeave);
+    dropArea.addEventListener('drop', handleDrop);
+
+    function handleDragOver(e) {
+      e.preventDefault();
+      dropArea.style.borderColor = 'blue';
+    }
+
+    function handleDragLeave() {
+      dropArea.style.borderColor = '#ccc';
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      dropArea.style.borderColor = '#ccc';
+      handleFiles(e.dataTransfer.files);
+    }
+
+    function handleFiles(files) {
+  const imageFiles = [...files].filter(file => file.type.startsWith('image/'));
+  if (!imageFiles.length) {
+    alert("Please drop image files only.");
+    return;
+  }
+
+  lastBatchCount = imageFiles.length;
+
+  // Total size of all files to calculate overall progress
+  const totalSize = imageFiles.reduce((sum, file) => sum + file.size, 0);
+  let uploadedSize = 0;
+
+  const readers = imageFiles.map(file => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      // Handle progress
+      reader.onprogress = (e) => {
+        if (e.lengthComputable) {
+          uploadedSize += e.loaded;
+
+          // Calculate percentage progress
+          const percent = Math.min((uploadedSize / totalSize) * 100, 100); // Ensure progress doesn't exceed 100%
+
+          // Update progress bar and text
+          document.getElementById('progress-bar').style.width = `${percent}%`;
+          document.getElementById('progress-text').innerText = `${Math.round(percent)}%`;
+        }
+      };
+
+      // Handle errors
+      reader.onerror = () => {
+        alert(`Error reading file: ${file.name}`);
+        reject(new Error(`Error reading file: ${file.name}`));
+      };
+
+      reader.onload = (e) => {
+        resolve({ src: e.target.result, filename: file.name });
+      };
+
+      reader.readAsDataURL(file);
+    });
+  });
+
+  // Show progress bar
+  document.getElementById('progress-bar-container').style.display = 'block';
+
+  // When all files are read, update the gallery and hide progress bar
+  Promise.all(readers).then((newImages) => {
+    imageList.push(...newImages);
+    sortAndDisplayGallery(newImages);
+    document.getElementById('progress-bar-container').style.display = 'none';
+  }).catch((error) => {
+    console.error(error);
+    document.getElementById('progress-bar-container').style.display = 'none';
+  });
+}
+
+function sortAndDisplayGallery(newBatch) {
+  const group = document.createElement('div');
+  group.classList.add('gallery-group');
+
+  newBatch.sort((a, b) => extractNumber(a.filename) - extractNumber(b.filename));
+
+  const startIndex = imageList.length - newBatch.length;
+
+  newBatch.forEach(({ src, filename }, i) => {
+    const container = document.createElement('div');
+    container.classList.add('gallery-item-container');
+
+    const img = document.createElement('img');
+    img.src = src;
+    img.classList.add('gallery-item');
+    img.alt = "Gallery item";
+    const globalIndex = startIndex + i;
+    img.onclick = () => openLightbox(globalIndex);
+
+    const fileName = document.createElement('div');
+    fileName.classList.add('filename');
+    fileName.innerText = filename;
+
+    container.appendChild(img);
+    container.appendChild(fileName);
+    group.appendChild(container);
+  });
+
+  gallery.appendChild(group);
+}
+
+
+    function extractNumber(filename) {
+      const match = filename.match(/\d+/g);
+      return match ? parseInt(match.join(''), 10) : Infinity;
+    }
+
+    function openLightbox(index) {
+      currentIndex = index;
+      lightboxImg.src = imageList[currentIndex].src;
+      lightboxFilename.innerText = imageList[currentIndex].filename;
+      lightbox.style.display = 'flex';
+      updateLightboxFilenames();
+    }
+
+    function closeLightbox() {
+      lightbox.style.display = 'none';
+    }
+
+    function toggleBackground() {
+      isWhiteBackground = !isWhiteBackground;
+      const bgColor = isWhiteBackground ? 'white' : 'black';
+      const textColor = isWhiteBackground ? 'black' : 'white';
+      document.body.style.backgroundColor = bgColor;
+      document.body.style.color = textColor;
+      gallery.style.backgroundColor = bgColor;
+      title.style.color = textColor;
+      legend.style.color = textColor;
+      lightbox.style.backgroundColor = bgColor;
+      updateLightboxTextColor();
+    }
+
+    function updateLightboxTextColor() {
+      lightboxFilename.style.color = isWhiteBackground ? 'black' : 'white';
+    }
+
+    function toggleFilenames() {
+      showFilenames = !showFilenames;
+      document.querySelectorAll('.filename').forEach(filename => {
+        filename.style.display = showFilenames ? 'block' : 'none';
+      });
+      updateLightboxFilenames();
+    }
+
+    function updateLightboxFilenames() {
+      lightboxFilename.style.display = showFilenames ? 'block' : 'none';
+      updateLightboxTextColor();
+    }
+
+    document.addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase(); // Case-insensitive check
+
+      if (lightbox.style.display === 'flex') {
+        if (e.key === 'ArrowRight') changeImage(1);
+        if (e.key === 'ArrowLeft') changeImage(-1);
+        if (e.key === 'Escape') closeLightbox();
+      }
+
+      if (key === 'f') toggleFullScreen();
+      if (key === 'w' || key === 'b') toggleBackground();
+      if (key === 'i') toggleFilenames();
+    });
+
+    function changeImage(direction) {
+      currentIndex = (currentIndex + direction + imageList.length) % imageList.length;
+      openLightbox(currentIndex);
+    }
+
+    function toggleFullScreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+    }
+    document.getElementById('clear-btn').addEventListener('click', () => {
+    if (confirm('Are you sure you want to clear all images?')) {
+        imageList = [];
+        gallery.innerHTML = '';
+    }
+});
+  </script>
+</body>
+</html>
