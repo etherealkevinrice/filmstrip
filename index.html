@@ -239,8 +239,6 @@
       const group = document.createElement('div');
       group.classList.add('gallery-group');
 
-      newBatch.sort((a, b) => extractNumber(a.filename) - extractNumber(b.filename));
-
       const startIndex = imageList.length - newBatch.length;
 
       newBatch.forEach(({ src, filename }, i) => {
@@ -251,7 +249,11 @@
         img.src = src;
         img.classList.add('gallery-item');
         img.alt = "Gallery item";
+
+        // Correctly calculate the global index
         const globalIndex = startIndex + i;
+
+        // Ensure the correct image is opened in the lightbox
         img.onclick = () => openLightbox(globalIndex);
 
         const fileName = document.createElement('div');
@@ -409,6 +411,13 @@
       if (confirm('Are you sure you want to clear all images?')) {
         imageList = [];
         gallery.innerHTML = '';
+        selectedImages.clear(); // Clear all selected (favorited) images
+
+        // Reset the lightbox star checkbox
+        const lightboxStarCheckbox = document.getElementById('lightbox-star-checkbox');
+        if (lightboxStarCheckbox) {
+          lightboxStarCheckbox.checked = false;
+        }
       }
     });
 
