@@ -85,12 +85,27 @@
       font-size: 12px;
     }
     #progress-bar {
-    width: 0%;
-    height: 10px;
-    background-color: black;
-    transition: width 0.3s ease-in-out;
-}
-
+      width: 0%;
+      height: 10px;
+      background-color: black;
+      transition: width 0.3s ease-in-out;
+    }
+    /* Style for the star checkbox */
+    .star-label {
+      display: inline-block;
+      font-size: 24px;
+      color: gray;
+      cursor: pointer;
+      margin-top: 5px;
+      user-select: none;
+      transition: color 0.3s;
+    }
+    .star-checkbox {
+      display: none;
+    }
+    .star-checkbox:checked + .star-label {
+      color: gold;
+    }
   </style>
 </head>
 <body>
@@ -111,20 +126,30 @@
   border-radius: 4px;
   transition: background-color 0.2s, color 0.2s;
 ">Clear All</button>
-
-
+  <button id="export-selects-btn" style="
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  padding: 8px 16px;
+  margin-top: 10px;
+  cursor: pointer;
+  border: 1px solid black;
+  background-color: white;
+  color: black;
+  border-radius: 4px;
+  transition: background-color 0.2s, color 0.2s;
+">Export Selects</button>
   <div id="drop-area" aria-label="Drop area to upload images">Drop images here</div>
   <div id="progress-bar-container" style="width: 90%; margin: 20px auto; display: none;">
     <span id="progress-text" style="font-size: 14px; font-weight: bold; color: black;">0%</span>
     <div id="progress-bar" style="width: 0%; height: 10px; background-color: black; transition: width 0.3s ease-in-out;"></div>
-</div>
-  <div id="progress-bar-container" style="width: 90%; margin: 20px auto; display: none;">
-    <div id="progress-bar" style="width: 0%; height: 10px; background-color: black;"></div>
-</div>  
+  </div>
   <div id="gallery" aria-live="polite"></div>
   <div id="lightbox" onclick="closeLightbox()" aria-hidden="true">
     <img id="lightbox-img" src="" alt="Lightbox image" />
-    <div id="lightbox-filename" class="filename"></div>  
+    <div id="lightbox-filename" class="filename"></div>
+    <!-- Add star favorite button to lightbox -->
+    <input type="checkbox" id="lightbox-star-checkbox" class="star-checkbox" />
+    <label for="lightbox-star-checkbox" class="star-label" id="lightbox-star-label">★</label>
   </div>
 
   <script>
@@ -135,12 +160,13 @@
     const lightboxFilename = document.getElementById('lightbox-filename');
     const title = document.getElementById('title');
     const legend = document.getElementById('legend');
+    const exportSelectsBtn = document.getElementById('export-selects-btn');
 
     let imageList = []; // Store all images globally
     let currentIndex = 0;
     let isWhiteBackground = true;
     let showFilenames = false;
-    let lastBatchCount = 0;
+    let selectedImages = new Set(); // Track favorited images
 
     dropArea.addEventListener('dragover', handleDragOver);
     dropArea.addEventListener('dragleave', handleDragLeave);
@@ -162,95 +188,138 @@
     }
 
     function handleFiles(files) {
-  const imageFiles = [...files].filter(file => file.type.startsWith('image/'));
-  if (!imageFiles.length) {
-    alert("Please drop image files only.");
-    return;
-  }
+      const imageFiles = [...files].filter(file => file.type.startsWith('image/'));
+      if (!imageFiles.length) {
+        alert("Please drop image files only.");
+        return;
+      }
 
-  lastBatchCount = imageFiles.length;
+      const totalSize = imageFiles.reduce((sum, file) => sum + file.size, 0);
+      let uploadedSize = 0;
 
-  // Total size of all files to calculate overall progress
-  const totalSize = imageFiles.reduce((sum, file) => sum + file.size, 0);
-  let uploadedSize = 0;
+      const readers = imageFiles.map(file => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
 
-  const readers = imageFiles.map(file => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
+          reader.onprogress = (e) => {
+            if (e.lengthComputable) {
+              uploadedSize += e.loaded;
+              const percent = Math.min((uploadedSize / totalSize) * 100, 100);
+              document.getElementById('progress-bar').style.width = `${percent}%`;
+              document.getElementById('progress-text').innerText = `${Math.round(percent)}%`;
+            }
+          };
 
-      // Handle progress
-      reader.onprogress = (e) => {
-        if (e.lengthComputable) {
-          uploadedSize += e.loaded;
+          reader.onerror = () => {
+            alert(`Error reading file: ${file.name}`);
+            reject(new Error(`Error reading file: ${file.name}`));
+          };
 
-          // Calculate percentage progress
-          const percent = Math.min((uploadedSize / totalSize) * 100, 100); // Ensure progress doesn't exceed 100%
+          reader.onload = (e) => {
+            resolve({ src: e.target.result, filename: file.name });
+          };
 
-          // Update progress bar and text
-          document.getElementById('progress-bar').style.width = `${percent}%`;
-          document.getElementById('progress-text').innerText = `${Math.round(percent)}%`;
-        }
-      };
+          reader.readAsDataURL(file);
+        });
+      });
 
-      // Handle errors
-      reader.onerror = () => {
-        alert(`Error reading file: ${file.name}`);
-        reject(new Error(`Error reading file: ${file.name}`));
-      };
+      document.getElementById('progress-bar-container').style.display = 'block';
 
-      reader.onload = (e) => {
-        resolve({ src: e.target.result, filename: file.name });
-      };
+      Promise.all(readers).then((newImages) => {
+        imageList.push(...newImages);
+        sortAndDisplayGallery(newImages);
+        document.getElementById('progress-bar-container').style.display = 'none';
+      }).catch((error) => {
+        console.error(error);
+        document.getElementById('progress-bar-container').style.display = 'none';
+      });
+    }
 
-      reader.readAsDataURL(file);
+    function sortAndDisplayGallery(newBatch) {
+      const group = document.createElement('div');
+      group.classList.add('gallery-group');
+
+      newBatch.sort((a, b) => extractNumber(a.filename) - extractNumber(b.filename));
+
+      const startIndex = imageList.length - newBatch.length;
+
+      newBatch.forEach(({ src, filename }, i) => {
+        const container = document.createElement('div');
+        container.classList.add('gallery-item-container');
+
+        const img = document.createElement('img');
+        img.src = src;
+        img.classList.add('gallery-item');
+        img.alt = "Gallery item";
+        const globalIndex = startIndex + i;
+        img.onclick = () => openLightbox(globalIndex);
+
+        const fileName = document.createElement('div');
+        fileName.classList.add('filename');
+        fileName.innerText = filename;
+
+        // Add star-shaped checkbox
+        const starCheckbox = document.createElement('input');
+        starCheckbox.type = 'checkbox';
+        starCheckbox.classList.add('star-checkbox');
+        starCheckbox.id = `star-${globalIndex}`;
+        starCheckbox.title = 'Favorite this photo';
+        starCheckbox.checked = selectedImages.has(globalIndex);
+        starCheckbox.setAttribute('aria-label', `Favorite ${filename}`);
+        starCheckbox.onchange = () => toggleFavorite(globalIndex, starCheckbox.checked);
+
+        const starLabel = document.createElement('label');
+        starLabel.classList.add('star-label');
+        starLabel.setAttribute('for', `star-${globalIndex}`);
+        starLabel.innerHTML = '★';
+
+        container.appendChild(img);
+        container.appendChild(fileName);
+        container.appendChild(starCheckbox);
+        container.appendChild(starLabel);
+        group.appendChild(container);
+      });
+
+      gallery.appendChild(group);
+    }
+
+    function toggleFavorite(index, isFavorited) {
+      if (isFavorited) {
+        selectedImages.add(index);
+      } else {
+        selectedImages.delete(index);
+      }
+
+      // Sync the main gallery checkbox
+      const galleryCheckbox = document.getElementById(`star-${index}`);
+      if (galleryCheckbox) {
+        galleryCheckbox.checked = isFavorited;
+      }
+    }
+
+    exportSelectsBtn.addEventListener('click', () => {
+      if (selectedImages.size === 0) {
+        alert('No images selected.');
+        return;
+      }
+
+      const selectsFolder = 'selects';
+      const zip = new JSZip();
+      const folder = zip.folder(selectsFolder);
+
+      selectedImages.forEach(index => {
+        const { src, filename } = imageList[index];
+        const base64Data = src.split(',')[1];
+        folder.file(filename, base64Data, { base64: true });
+      });
+
+      zip.generateAsync({ type: 'blob' }).then(content => {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(content);
+        link.download = `${selectsFolder}.zip`;
+        link.click();
+      });
     });
-  });
-
-  // Show progress bar
-  document.getElementById('progress-bar-container').style.display = 'block';
-
-  // When all files are read, update the gallery and hide progress bar
-  Promise.all(readers).then((newImages) => {
-    imageList.push(...newImages);
-    sortAndDisplayGallery(newImages);
-    document.getElementById('progress-bar-container').style.display = 'none';
-  }).catch((error) => {
-    console.error(error);
-    document.getElementById('progress-bar-container').style.display = 'none';
-  });
-}
-
-function sortAndDisplayGallery(newBatch) {
-  const group = document.createElement('div');
-  group.classList.add('gallery-group');
-
-  newBatch.sort((a, b) => extractNumber(a.filename) - extractNumber(b.filename));
-
-  const startIndex = imageList.length - newBatch.length;
-
-  newBatch.forEach(({ src, filename }, i) => {
-    const container = document.createElement('div');
-    container.classList.add('gallery-item-container');
-
-    const img = document.createElement('img');
-    img.src = src;
-    img.classList.add('gallery-item');
-    img.alt = "Gallery item";
-    const globalIndex = startIndex + i;
-    img.onclick = () => openLightbox(globalIndex);
-
-    const fileName = document.createElement('div');
-    fileName.classList.add('filename');
-    fileName.innerText = filename;
-
-    container.appendChild(img);
-    container.appendChild(fileName);
-    group.appendChild(container);
-  });
-
-  gallery.appendChild(group);
-}
-
 
     function extractNumber(filename) {
       const match = filename.match(/\d+/g);
@@ -263,6 +332,11 @@ function sortAndDisplayGallery(newBatch) {
       lightboxFilename.innerText = imageList[currentIndex].filename;
       lightbox.style.display = 'flex';
       updateLightboxFilenames();
+
+      // Update the star checkbox state
+      const isFavorited = selectedImages.has(currentIndex);
+      const lightboxStarCheckbox = document.getElementById('lightbox-star-checkbox');
+      lightboxStarCheckbox.checked = isFavorited;
     }
 
     function closeLightbox() {
@@ -300,7 +374,7 @@ function sortAndDisplayGallery(newBatch) {
     }
 
     document.addEventListener('keydown', (e) => {
-      const key = e.key.toLowerCase(); // Case-insensitive check
+      const key = e.key.toLowerCase();
 
       if (lightbox.style.display === 'flex') {
         if (e.key === 'ArrowRight') changeImage(1);
@@ -314,23 +388,51 @@ function sortAndDisplayGallery(newBatch) {
     });
 
     function changeImage(direction) {
+      if (imageList.length === 0) return;
       currentIndex = (currentIndex + direction + imageList.length) % imageList.length;
       openLightbox(currentIndex);
     }
 
     function toggleFullScreen() {
       if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen();
+        document.documentElement.requestFullscreen().catch((err) => {
+          console.error(`Error attempting to enable fullscreen mode: ${err.message}`);
+        });
       } else {
-        document.exitFullscreen();
+        document.exitFullscreen().catch((err) => {
+          console.error(`Error attempting to exit fullscreen mode: ${err.message}`);
+        });
       }
     }
+
     document.getElementById('clear-btn').addEventListener('click', () => {
-    if (confirm('Are you sure you want to clear all images?')) {
+      if (confirm('Are you sure you want to clear all images?')) {
         imageList = [];
         gallery.innerHTML = '';
-    }
-});
+      }
+    });
+
+    // Add event listener for the lightbox star checkbox
+    document.getElementById('lightbox-star-checkbox').addEventListener('change', (e) => {
+      e.stopPropagation(); // Prevent the click from closing the lightbox
+      toggleFavorite(currentIndex, e.target.checked);
+    });
   </script>
+  <script>
+    // Add event listener for the lightbox star checkbox
+    document.getElementById('lightbox-star-checkbox').addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent the click from closing the lightbox
+    });
+
+    // Add event listener for the lightbox star label
+    document.getElementById('lightbox-star-label').addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent the click from closing the lightbox
+    });
+
+    document.getElementById('lightbox-star-checkbox').addEventListener('change', (e) => {
+      toggleFavorite(currentIndex, e.target.checked);
+    });
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </body>
 </html>
